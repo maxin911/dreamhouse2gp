@@ -8,7 +8,7 @@ node {
     def TEST_LEVEL = 'RunLocalTests'
     def PACKAGE_NAME = 'dreamhousetest' // 你的包 ID
     def PACKAGE_VERSION
-    def SF_INSTANCE_URL = env.SF_INSTANCE_URL ?: "https://test.salesforce.com"
+    def SF_INSTANCE_URL = env.SF_INSTANCE_URL ?: "https://login.salesforce.com"
 
     // -------------------------------------------------------------------------
     // 检出代码
