@@ -8,7 +8,7 @@ node {
     def TEST_LEVEL = 'RunLocalTests'
     def PACKAGE_NAME = '0Hog800000035ETCAY' // 你的包 ID
     def PACKAGE_VERSION
-    def SF_INSTANCE_URL = env.SF_INSTANCE_URL ?: "https://login.salesforce.com"
+    def SF_INSTANCE_URL = env.SF_INSTANCE_URL ?: "https://test.salesforce.com"
 
     // -------------------------------------------------------------------------
     // 检出代码
