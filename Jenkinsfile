@@ -1,197 +1,109 @@
 #!groovy
-
 import groovy.json.JsonSlurperClassic
 
 node {
-
-    def SF_USERNAME=env.SF_USERNAME
-    def SF_CLIENT_ID=env.SF_CLIENT_ID
-    def TEST_LEVEL='RunLocalTests'
-    def PACKAGE_NAME='0Hog800000035ETCAY'
+    // 基础环境变量映射（建议在 Jenkins Job 界面配置这些环境变量）
+    def SF_USERNAME = env.SF_USERNAME
+    def SF_CLIENT_ID = env.SF_CLIENT_ID
+    def TEST_LEVEL = 'RunLocalTests'
+    def PACKAGE_NAME = '0Hog800000035ETCAY' // 你的包 ID
     def PACKAGE_VERSION
     def SF_INSTANCE_URL = env.SF_INSTANCE_URL ?: "https://login.salesforce.com"
 
-    def toolbelt = tool 'toolbelt'
-
-
     // -------------------------------------------------------------------------
-    // Check out code from source control.
+    // 检出代码
     // -------------------------------------------------------------------------
-
     stage('checkout source') {
         checkout scm
     }
 
-
     // -------------------------------------------------------------------------
-    // Run all the enclosed stages with access to the Salesforce
-    // JWT key credentials.
+    // 使用 Salesforce 凭据进行操作
     // -------------------------------------------------------------------------
-    
     withEnv(["HOME=${env.WORKSPACE}"]) {
-        
+        // 这里的 'sf-jwt-key' 必须与你在 Jenkins Credentials 存储的 ID 一致
         withCredentials([file(credentialsId: 'sf-jwt-key', variable: 'server_key_file')]) {
 
-            // -------------------------------------------------------------------------
-            // Authorize the Dev Hub org with JWT key and give it an alias.
-            // -------------------------------------------------------------------------
-
+            // 1. 授权 Dev Hub
             stage('Authorize DevHub') {
-                rc = command "${toolbelt}/sf org login jwt --instance-url ${SF_INSTANCE_URL} --client-id ${SF_CLIENT_ID} --username ${SF_USERNAME} --jwt-key-file ${server_key_file} --set-default-dev-hub --alias HubOrg"
+                // 直接使用 sf，不再依赖 toolbelt 变量
+                rc = command "sf org login jwt --instance-url ${SF_INSTANCE_URL} --client-id ${SF_CLIENT_ID} --username ${SF_USERNAME} --jwt-key-file ${server_key_file} --set-default-dev-hub --alias HubOrg"
                 if (rc != 0) {
                     error 'Salesforce dev hub org authorization failed.'
                 }
             }
 
-
-            // -------------------------------------------------------------------------
-            // Create new scratch org to test your code.
-            // -------------------------------------------------------------------------
-
+            // 2. 创建第一个临时组织 (用于源代码验证)
             stage('Create Test Scratch Org') {
-                rc = command "${toolbelt}/sf org create scratch --target-dev-hub HubOrg --set-default --definition-file config/project-scratch-def.json --alias ciorg --wait 10 --duration-days 1"
+                rc = command "sf org create scratch --target-dev-hub HubOrg --set-default --definition-file config/project-scratch-def.json --alias ciorg --wait 10 --duration-days 1"
                 if (rc != 0) {
                     error 'Salesforce test scratch org creation failed.'
                 }
             }
 
-
-            // -------------------------------------------------------------------------
-            // Display test scratch org info.
-            // -------------------------------------------------------------------------
-
-            stage('Display Test Scratch Org') {
-                rc = command "${toolbelt}/sf org display --target-org ciorg"
-                if (rc != 0) {
-                    error 'Salesforce test scratch org display failed.'
-                }
+            // 3. 推送代码并运行测试 (确保源代码健康)
+            stage('Deploy and Test Source') {
+                rc = command "sf project deploy start --target-org ciorg --wait 10"
+                if (rc != 0) error 'Source deployment failed.'
+                
+                rc = command "sf apex run test --target-org ciorg --wait 10 --result-format tap --code-coverage --test-level ${TEST_LEVEL}"
+                if (rc != 0) error 'Unit tests failed in source org.'
             }
 
-
-            // -------------------------------------------------------------------------
-            // Push source to test scratch org.
-            // -------------------------------------------------------------------------
-
-            stage('Push To Test Scratch Org') {
-                rc = command "${toolbelt}/sf project deploy start --target-org ciorg"
-                if (rc != 0) {
-                    error 'Salesforce push to test scratch org failed.'
-                }
+            // 4. 清理第一个临时组织
+            stage('Delete Test Org') {
+                command "sf org delete scratch --target-org ciorg --no-prompt"
             }
 
-
-            // -------------------------------------------------------------------------
-            // Run unit tests in test scratch org.
-            // -------------------------------------------------------------------------
-
-            stage('Run Tests In Test Scratch Org') {
-                rc = command "${toolbelt}/sf apex run test --target-org ciorg --wait 10 --result-format tap --code-coverage --test-level ${TEST_LEVEL}"
-                if (rc != 0) {
-                    error 'Salesforce unit test run in test scratch org failed.'
-                }
-            }
-
-
-            // -------------------------------------------------------------------------
-            // Delete test scratch org.
-            // -------------------------------------------------------------------------
-
-            stage('Delete Test Scratch Org') {
-                rc = command "${toolbelt}/sf org delete scratch --target-org installorg --no-prompt"
-                if (rc != 0) {
-                    error 'Salesforce test scratch org deletion failed.'
-                }
-            }
-
-
-            // -------------------------------------------------------------------------
-            // Create package version.
-            // -------------------------------------------------------------------------
-
+            // 5. 创建软件包版本 (添加了 --code-coverage)
             stage('Create Package Version') {
+                // 关键点：添加了 --code-coverage 以便后续可以 Promote
+                def createCmd = "sf package version create --package ${PACKAGE_NAME} --installation-key-bypass --code-coverage --wait 20 --json --target-dev-hub HubOrg"
+                
                 if (isUnix()) {
-                    output = sh returnStdout: true, script: "${toolbelt}/sf package version create --package ${PACKAGE_NAME} --installation-key-bypass --wait 10 --json --target-dev-hub HubOrg"
+                    output = sh(returnStdout: true, script: createCmd)
                 } else {
-                    output = bat(returnStdout: true, script: "${toolbelt}/sf package version create --package ${PACKAGE_NAME} --installation-key-bypass --wait 10 --json --target-dev-hub HubOrg").trim()
+                    output = bat(returnStdout: true, script: createCmd).trim()
                     output = output.readLines().drop(1).join(" ")
                 }
-
-                // Wait 5 minutes for package replication.
-                sleep 300
 
                 def jsonSlurper = new JsonSlurperClassic()
                 def response = jsonSlurper.parseText(output)
 
+                // 获取生成的 04t ID
                 PACKAGE_VERSION = response.result.SubscriberPackageVersionId
-
-                response = null
-
-                echo ${PACKAGE_VERSION}
+                echo "Successfully created package version: ${PACKAGE_VERSION}"
+                
+                // 等待同步，避免立刻安装时报找不到包的错误
+                echo "Waiting 5 minutes for package replication..."
+                sleep 300
             }
 
-
-            // -------------------------------------------------------------------------
-            // Create new scratch org to install package to.
-            // -------------------------------------------------------------------------
-
-            stage('Create Package Install Scratch Org') {
-                rc = command "${toolbelt}/sf org create scratch --target-dev-hub HubOrg --set-default --definition-file config/project-scratch-def.json --alias installorg --wait 10 --duration-days 1"
-                if (rc != 0) {
-                    error 'Salesforce package install scratch org creation failed.'
-                }
+            // 6. 创建第二个临时组织 (用于验证安装包)
+            stage('Create Install Verification Org') {
+                rc = command "sf org create scratch --target-dev-hub HubOrg --definition-file config/project-scratch-def.json --alias installorg --wait 10 --duration-days 1"
+                if (rc != 0) error 'Install scratch org creation failed.'
             }
 
-
-            // -------------------------------------------------------------------------
-            // Display install scratch org info.
-            // -------------------------------------------------------------------------
-
-            stage('Display Install Scratch Org') {
-                rc = command "${toolbelt}/sf org display --target-org installorg"
-                if (rc != 0) {
-                    error 'Salesforce install scratch org display failed.'
-                }
+            // 7. 安装并验证包
+            stage('Install and Verify Package') {
+                rc = command "sf package install --package ${PACKAGE_VERSION} --target-org installorg --wait 15 --no-prompt"
+                if (rc != 0) error 'Package installation failed.'
+                
+                // 再次运行测试，确保包内逻辑正确
+                rc = command "sf apex run test --target-org installorg --result-format tap --code-coverage --test-level ${TEST_LEVEL} --wait 10"
+                if (rc != 0) error 'Tests failed in installed package.'
             }
 
-
-            // -------------------------------------------------------------------------
-            // Install package in scratch org.
-            // -------------------------------------------------------------------------
-
-            stage('Install Package In Scratch Org') {
-                rc = command "${toolbelt}/sf package install --package ${PACKAGE_VERSION} --target-org installorg --wait 10"
-                if (rc != 0) {
-                    error 'Salesforce package install failed.'
-                }
-            }
-
-
-            // -------------------------------------------------------------------------
-            // Run unit tests in package install scratch org.
-            // -------------------------------------------------------------------------
-
-            stage('Run Tests In Package Install Scratch Org') {
-                rc = command "${toolbelt}/sf apex run test --target-org installorg --result-format tap --code-coverage --test-level ${TEST_LEVEL} --wait 10"
-                if (rc != 0) {
-                    error 'Salesforce unit test run in pacakge install scratch org failed.'
-                }
-            }
-
-
-            // -------------------------------------------------------------------------
-            // Delete package install scratch org.
-            // -------------------------------------------------------------------------
-
-            stage('Delete Package Install Scratch Org') {
-                rc = command "${toolbelt}/sf org delete scratch --target-org installorg --no-prompt"
-                if (rc != 0) {
-                    error 'Salesforce package install scratch org deletion failed.'
-                }
+            // 8. 最终清理
+            stage('Final Cleanup') {
+                command "sf org delete scratch --target-org installorg --no-prompt"
             }
         }
     }
 }
 
+// 通用命令处理函数
 def command(script) {
     if (isUnix()) {
         return sh(returnStatus: true, script: script);
