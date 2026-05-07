@@ -27,7 +27,7 @@ node {
             // 1. 授权 Dev Hub
             stage('Authorize DevHub') {
                 // 直接使用 sf，不再依赖 toolbelt 变量
-                rc = command "sf org login jwt --instance-url ${SF_INSTANCE_URL} --client-id ${SF_CLIENT_ID} --username ${SF_USERNAME} --jwt-key-file ${server_key_file} --set-default-dev-hub --alias HubOrg"
+                rc = command "sf org login jwt --instance-url ${SF_INSTANCE_URL} --client-id ${SF_CLIENT_ID} --username ${SF_USERNAME} --jwt-key-file ${server_key_file} --set-default-dev-hub --alias DevHub"
                 if (rc != 0) {
                     error 'Salesforce dev hub org authorization failed.'
                 }
@@ -35,7 +35,7 @@ node {
 
             // 2. 创建第一个临时组织 (用于源代码验证)
             stage('Create Test Scratch Org') {
-                rc = command "sf org create scratch --target-dev-hub HubOrg --set-default --definition-file config/project-scratch-def.json --alias ciorg --wait 10 --duration-days 1"
+                rc = command "sf org create scratch --target-dev-hub DevHub --set-default --definition-file config/project-scratch-def.json --alias ciorg --wait 10 --duration-days 1"
                 if (rc != 0) {
                     error 'Salesforce test scratch org creation failed.'
                 }
@@ -58,7 +58,7 @@ node {
             // 5. 创建软件包版本 (添加了 --code-coverage)
             stage('Create Package Version') {
                 // 关键点：添加了 --code-coverage 以便后续可以 Promote
-                def createCmd = "sf package version create --package ${PACKAGE_NAME} --installation-key-bypass --code-coverage --wait 20 --json --target-dev-hub HubOrg"
+                def createCmd = "sf package version create --package ${PACKAGE_NAME} --installation-key-bypass --code-coverage --wait 20 --json --target-dev-hub DevHub"
                 
                 if (isUnix()) {
                     output = sh(returnStdout: true, script: createCmd)
@@ -81,7 +81,7 @@ node {
 
             // 6. 创建第二个临时组织 (用于验证安装包)
             stage('Create Install Verification Org') {
-                rc = command "sf org create scratch --target-dev-hub HubOrg --definition-file config/project-scratch-def.json --alias installorg --wait 10 --duration-days 1"
+                rc = command "sf org create scratch --target-dev-hub DevHub --definition-file config/project-scratch-def.json --alias installorg --wait 10 --duration-days 1"
                 if (rc != 0) error 'Install scratch org creation failed.'
             }
 
