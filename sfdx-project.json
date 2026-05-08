@@ -4,7 +4,7 @@
       "versionName": "ver 0.1",
       "versionNumber": "0.1.0.NEXT",
       "path": "force-app",
-      "default": true,
+      "default": false,
       "package": "dreamhousetest",
       "versionDescription": "My Package"
     }
@@ -13,6 +13,6 @@
   "sfdcLoginUrl": "https://login.salesforce.com",
   "sourceApiVersion": "61.0",
   "packageAliases": {
-    "dreamhousetest": "0Hog800000035JJCAY"
+    "dreamhousetest": "0Hofj0000001r5VCAQ"
   }
 }
