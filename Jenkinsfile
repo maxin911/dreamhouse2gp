@@ -1,5 +1,5 @@
 #!groovy
-import groovy.json.JsonSlurperClassic
+
 
 node {
     // 基础环境变量映射
@@ -44,8 +44,10 @@ node {
             */
 
             // 2. 直接创建软件包版本 (不消耗 Scratch Org 配额)
+            // 1. 删除脚本顶部的 import groovy.json.JsonSlurperClassic
+
+            // 2. 修改 Create Package Version 阶段的代码
             stage('Create Package Version') {
-                echo "Starting Package Version Creation..."
                 def createCmd = "sf package version create --package ${PACKAGE_NAME} --installation-key-bypass --code-coverage --wait 20 --json --target-dev-hub DevHub"
                 
                 def output
@@ -53,17 +55,15 @@ node {
                     output = sh(returnStdout: true, script: createCmd)
                 } else {
                     output = bat(returnStdout: true, script: createCmd).trim()
-                    // 过滤 Windows bat 可能产生的冗余输出，只取 JSON 部分
-                    output = output.readLines().find { it.startsWith('{') } ?: output
+                    output = output.readLines().find { it.contains('{') && it.contains('}') } ?: output
                 }
 
-                def jsonSlurper = new JsonSlurperClassic()
-                def response = jsonSlurper.parseText(output)
+                // 使用 Jenkins 内置的 readJSON 替代 JsonSlurper
+                def response = readJSON text: output
 
                 if (response.status == 0) {
                     PACKAGE_VERSION = response.result.SubscriberPackageVersionId
                     echo "Successfully created package version: ${PACKAGE_VERSION}"
-                    echo "You can now manually install this in any Sandbox using: sf package install --package ${PACKAGE_VERSION}"
                 } else {
                     error "Package version creation failed: ${response.message}"
                 }
