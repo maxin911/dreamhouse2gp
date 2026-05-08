@@ -8,7 +8,7 @@ node {
     def TEST_LEVEL = 'RunLocalTests'
     def PACKAGE_NAME = 'dreamhousetest' // 你的包 ID
     def PACKAGE_VERSION
-    def SF_INSTANCE_URL = env.SF_INSTANCE_URL ?: "https://login.salesforce.com"
+    def SF_INSTANCE_URL = "https://login.salesforce.com"
 
     // -------------------------------------------------------------------------
     // 检出代码
@@ -28,6 +28,8 @@ node {
             stage('Authorize DevHub') {
                 // 直接使用 sf，不再依赖 toolbelt 变量
                 rc = command "sf org login jwt --instance-url ${SF_INSTANCE_URL} --client-id ${SF_CLIENT_ID} --username ${SF_USERNAME} --jwt-key-file ${server_key_file} --set-default-dev-hub --alias DevHub"
+                command "sf org display --target-org DevHub"
+                command "sf org list --target-dev-hub DevHub"
                 if (rc != 0) {
                     error 'Salesforce dev hub org authorization failed.'
                 }
